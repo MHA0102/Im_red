@@ -8,6 +8,16 @@ from PIL import Image, ImageTk
 import threading
 from openai import OpenAI
 
+# Фикс размытости на экранах с масштабированием (125%, 150% и т.д.)
+try:
+    from ctypes import windll
+    windll.shcore.SetProcessDpiAwareness(2)
+except Exception:
+    try:
+        windll.user32.SetProcessDPIAware()
+    except Exception:
+        pass
+
 client = OpenAI(
     base_url="http://localhost:1234/v1",
     api_key="lm-studio"
@@ -560,4 +570,3 @@ if __name__ == "__main__":
         sys.exit(1)
     app = App()
     app.mainloop()
- 
