@@ -257,33 +257,16 @@ class App(tk.Tk):
         # Открыть файл
         self._btn(parent, "📂  Открыть изображение", self._open_file, accent=True)
 
-        # Undo / Reset
-        frm_ur = tk.Frame(parent, bg=PANEL)
-        frm_ur.pack(fill="x", padx=16, pady=(4,0))
-        b_undo = tk.Button(frm_ur, text="↩ Отменить", command=self._undo,
-                           bg=CARD, fg=TEXT, relief="flat", cursor="hand2",
-                           font=("Segoe UI", 10), padx=10, pady=8, bd=0,
-                           activebackground=BTN_HOVER, activeforeground="#fff")
-        b_undo.pack(side="left", expand=True, fill="x", padx=(0,3))
-        b_undo.bind("<Enter>", lambda e: b_undo.config(bg=BTN_HOVER))
-        b_undo.bind("<Leave>", lambda e: b_undo.config(bg=CARD))
-
-        b_reset = tk.Button(frm_ur, text="🔁 Оригинал", command=self._reset,
-                            bg=CARD, fg=DANGER, relief="flat", cursor="hand2",
-                            font=("Segoe UI", 10), padx=10, pady=8, bd=0,
-                            activebackground="#7f1d1d", activeforeground="#fff")
-        b_reset.pack(side="left", expand=True, fill="x", padx=(3,0))
-        b_reset.bind("<Enter>", lambda e: b_reset.config(bg="#7f1d1d", fg="#fff"))
-        b_reset.bind("<Leave>", lambda e: b_reset.config(bg=CARD, fg=DANGER))
+        # Undo / Reset — каждая кнопка на своей строке, полная ширина
+        self._btn(parent, "↩  Отменить последнее действие", self._undo)
+        self._btn(parent, "🔁  Вернуть оригинал", self._reset, danger=True)
 
         self._divider(parent)
 
         # Поворот
         self._section(parent, "🔄  Поворот")
-        frm = tk.Frame(parent, bg=PANEL)
-        frm.pack(fill="x", padx=16, pady=(0,4))
         for angle in [90, 180, 270]:
-            self._small_btn(frm, f"{angle}°", lambda a=angle: self._action(f"повернуть на {a} градусов"))
+            self._btn(parent, f"🔄  Повернуть на {angle}°", lambda a=angle: self._action(f"повернуть на {a} градусов"))
         self._angle_row(parent)
         self._divider(parent)
 
@@ -297,18 +280,14 @@ class App(tk.Tk):
 
         # Отражение
         self._section(parent, "🪞  Отражение")
-        frm2 = tk.Frame(parent, bg=PANEL)
-        frm2.pack(fill="x", padx=16, pady=(0,4))
-        self._small_btn(frm2, "↔ Гориз.", lambda: self._action("отрази горизонтально"))
-        self._small_btn(frm2, "↕ Верт.", lambda: self._action("отрази вертикально"))
+        self._btn(parent, "↔  По горизонтали", lambda: self._action("отрази горизонтально"))
+        self._btn(parent, "↕  По вертикали",   lambda: self._action("отрази вертикально"))
         self._divider(parent)
 
         # Размытие
         self._section(parent, "💧  Размытие")
-        frm3 = tk.Frame(parent, bg=PANEL)
-        frm3.pack(fill="x", padx=16, pady=(0,4))
-        for label, k in [("Слабое","5"),("Среднее","15"),("Сильное","31")]:
-            self._small_btn(frm3, label, lambda k=k: self._action(f"размыть с ядром {k}"))
+        for label, k in [("💧  Слабое","5"),("💧💧  Среднее","15"),("💧💧💧  Сильное","31")]:
+            self._btn(parent, label, lambda k=k: self._action(f"размыть с ядром {k}"))
         self._divider(parent)
 
         # Размер
@@ -330,17 +309,21 @@ class App(tk.Tk):
     def _divider(self, parent):
         tk.Frame(parent, bg=BORDER, height=1).pack(fill="x", padx=16, pady=8)
 
-    def _btn(self, parent, text, cmd, accent=False):
-        bg = ACCENT if accent else CARD
-        fg = "#fff" if accent else TEXT
+    def _btn(self, parent, text, cmd, accent=False, danger=False):
+        if danger:
+            bg, fg, hover = CARD, DANGER, "#7f1d1d"
+        elif accent:
+            bg, fg, hover = ACCENT, "#fff", BTN_HOVER
+        else:
+            bg, fg, hover = CARD, TEXT, "#2d2d4a"
         b = tk.Button(parent, text=text, command=cmd,
                       bg=bg, fg=fg, relief="flat", cursor="hand2",
                       font=("Segoe UI", 10), anchor="w",
                       padx=14, pady=10, bd=0,
-                      activebackground=BTN_HOVER, activeforeground="#fff")
+                      activebackground=hover, activeforeground="#fff")
         b.pack(fill="x", padx=16, pady=3)
-        b.bind("<Enter>", lambda e: b.config(bg=BTN_HOVER if accent else "#2d2d4a"))
-        b.bind("<Leave>", lambda e: b.config(bg=bg))
+        b.bind("<Enter>", lambda e: b.config(bg=hover, fg="#fff"))
+        b.bind("<Leave>", lambda e: b.config(bg=bg, fg=fg))
 
     def _small_btn(self, parent, text, cmd):
         b = tk.Button(parent, text=text, command=cmd,
