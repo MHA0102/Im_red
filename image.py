@@ -2,6 +2,10 @@ import cv2
 import json
 import sys
 import numpy as np
+import tkinter as tk
+from tkinter import filedialog, messagebox, ttk
+from PIL import Image, ImageTk
+import threading
 from openai import OpenAI
  
 client = OpenAI(
@@ -9,12 +13,27 @@ client = OpenAI(
     api_key="lm-studio"
 )
  
+# ── Цвета ──────────────────────────────────────────────────────────────────
+BG        = "#0f0f13"
+PANEL     = "#1a1a24"
+CARD      = "#22223a"
+ACCENT    = "#7c6af7"
+ACCENT2   = "#a78bfa"
+SUCCESS   = "#4ade80"
+WARNING   = "#facc15"
+DANGER    = "#f87171"
+TEXT      = "#e2e8f0"
+MUTED     = "#64748b"
+BORDER    = "#2e2e4a"
+BTN_HOVER = "#6d5ce6"
+ 
+# ── ImageProcessor ─────────────────────────────────────────────────────────
 class ImageProcessor:
     def __init__(self, image_path):
         self.image_path = image_path
         self.img = cv2.imread(image_path)
         if self.img is None:
-            raise FileNotFoundError(f"Image not found at {image_path}")
+            raise FileNotFoundError(f"Файл не найден: {image_path}")
         self.is_grayscale = False
  
     def rotate_image(self, angle: int):
@@ -28,294 +47,428 @@ class ImageProcessor:
             h, w = self.img.shape[:2]
             cx, cy = w // 2, h // 2
             M = cv2.getRotationMatrix2D((cx, cy), -angle, 1.0)
-            cos = abs(M[0, 0])
-            sin = abs(M[0, 1])
-            new_w = int(h * sin + w * cos)
-            new_h = int(h * cos + w * sin)
-            M[0, 2] += new_w / 2 - cx
-            M[1, 2] += new_h / 2 - cy
-            self.img = cv2.warpAffine(self.img, M, (new_w, new_h),
+            cos, sin = abs(M[0,0]), abs(M[0,1])
+            nw, nh = int(h*sin+w*cos), int(h*cos+w*sin)
+            M[0,2] += nw/2 - cx; M[1,2] += nh/2 - cy
+            self.img = cv2.warpAffine(self.img, M, (nw, nh),
                                       borderMode=cv2.BORDER_CONSTANT,
-                                      borderValue=(0, 0, 0))
-        return f"Изображение повернуто на {angle}°"
+                                      borderValue=(0,0,0))
+        return f"Повернуто на {angle}°"
  
     def resize_image(self, width: int, height: int):
         self.img = cv2.resize(self.img, (width, height))
-        return "Размер изображения изменен"
+        return f"Размер изменён → {width}×{height}"
  
     def flip_image(self, direction: str):
-        if direction == "horizontal":
-            self.img = cv2.flip(self.img, 1)
-        elif direction == "vertical":
-            self.img = cv2.flip(self.img, 0)
-        return "Изображение зеркально отражено"
+        self.img = cv2.flip(self.img, 1 if direction == "horizontal" else 0)
+        return "Отражено " + ("по горизонтали" if direction == "horizontal" else "по вертикали")
  
     def blur_image(self, kernel_size: int):
-        if kernel_size % 2 == 0:
-            kernel_size += 1
+        if kernel_size % 2 == 0: kernel_size += 1
         self.img = cv2.GaussianBlur(self.img, (kernel_size, kernel_size), 0)
-        return "Изображение размыто"
+        return f"Размытие (ядро {kernel_size})"
  
     def convert_to_grayscale(self, mode: str = "standard"):
         if self.is_grayscale or len(self.img.shape) == 2:
             self.img = cv2.cvtColor(self.img, cv2.COLOR_GRAY2BGR)
             self.is_grayscale = False
- 
         b, g, r = cv2.split(self.img.astype(np.float32))
- 
         if mode == "standard":
             gray = cv2.cvtColor(self.img, cv2.COLOR_BGR2GRAY)
- 
         elif mode == "hc":
             lab = cv2.cvtColor(self.img, cv2.COLOR_BGR2LAB)
             l, a, b_ch = cv2.split(lab)
-            clahe = cv2.createCLAHE(clipLimit=3.0, tileGridSize=(8, 8))
-            l_eq = clahe.apply(l)
-            lab_eq = cv2.merge([l_eq, a, b_ch])
-            enhanced = cv2.cvtColor(lab_eq, cv2.COLOR_LAB2BGR)
-            gray = cv2.cvtColor(enhanced, cv2.COLOR_BGR2GRAY)
- 
+            clahe = cv2.createCLAHE(clipLimit=3.0, tileGridSize=(8,8))
+            gray = cv2.cvtColor(cv2.cvtColor(cv2.merge([clahe.apply(l), a, b_ch]),
+                                              cv2.COLOR_LAB2BGR), cv2.COLOR_BGR2GRAY)
         elif mode == "soft":
-            blurred = cv2.GaussianBlur(self.img, (3, 3), 0)
-            gray = cv2.cvtColor(blurred, cv2.COLOR_BGR2GRAY)
-            gray = cv2.addWeighted(gray, 0.85, np.full_like(gray, 255), 0.15, 0)
- 
+            blurred = cv2.GaussianBlur(self.img, (3,3), 0)
+            gray = cv2.addWeighted(cv2.cvtColor(blurred, cv2.COLOR_BGR2GRAY),
+                                   0.85, np.full_like(blurred[:,:,0], 255), 0.15, 0)
         elif mode == "film":
-            gray_f = 0.27 * r + 0.53 * g + 0.20 * b
+            gray_f = 0.27*r + 0.53*g + 0.20*b
             gray = np.clip(gray_f, 0, 255).astype(np.uint8)
             noise = np.random.normal(0, 4, gray.shape).astype(np.int16)
-            gray = np.clip(gray.astype(np.int16) + noise, 0, 255).astype(np.uint8)
- 
+            gray = np.clip(gray.astype(np.int16)+noise, 0, 255).astype(np.uint8)
         elif mode == "infrared":
-            gray_f = 0.07 * r + 0.72 * g + 0.21 * b
-            gray = np.clip(gray_f, 0, 255).astype(np.uint8)
-            gray = cv2.equalizeHist(gray)
- 
+            gray_f = 0.07*r + 0.72*g + 0.21*b
+            gray = cv2.equalizeHist(np.clip(gray_f, 0, 255).astype(np.uint8))
         else:
             gray = cv2.cvtColor(self.img, cv2.COLOR_BGR2GRAY)
- 
         self.img = gray
         self.is_grayscale = True
-        return "Изображение переведено в ч/б"
+        names = {"standard":"Обычный","hc":"Высококонтрастный","soft":"Мягкий",
+                 "film":"Kodak T-MAX","infrared":"Инфракрасный"}
+        return f"Ч/б — {names.get(mode, mode)}"
  
     def save_result(self, output_path="result.jpg"):
         cv2.imwrite(output_path, self.img)
+        return output_path
  
+    def get_pil(self, max_w=700, max_h=500):
+        img = self.img.copy()
+        if len(img.shape) == 2:
+            img = cv2.cvtColor(img, cv2.COLOR_GRAY2RGB)
+        else:
+            img = cv2.cvtColor(img, cv2.COLOR_BGR2RGB)
+        h, w = img.shape[:2]
+        scale = min(max_w/w, max_h/h, 1.0)
+        if scale < 1.0:
+            img = cv2.resize(img, (int(w*scale), int(h*scale)))
+        return Image.fromarray(img)
  
-tools = [
-    {
-        "type": "function",
-        "function": {
-            "name": "rotate_image",
-            "description": "Повернуть изображение на заданный угол.",
-            "parameters": {
-                "type": "object",
-                "properties": {
-                    "angle": {"type": "integer", "description": "Угол поворота в градусах"}
-                },
-                "required": ["angle"]
-            }
-        }
-    },
-    {
-        "type": "function",
-        "function": {
-            "name": "resize_image",
-            "description": "Изменить разрешение изображения.",
-            "parameters": {
-                "type": "object",
-                "properties": {
-                    "width": {"type": "integer"},
-                    "height": {"type": "integer"}
-                },
-                "required": ["width", "height"]
-            }
-        }
-    },
-    {
-        "type": "function",
-        "function": {
-            "name": "flip_image",
-            "description": "Отразить изображение.",
-            "parameters": {
-                "type": "object",
-                "properties": {
-                    "direction": {"type": "string", "enum": ["horizontal", "vertical"]}
-                },
-                "required": ["direction"]
-            }
-        }
-    },
-    {
-        "type": "function",
-        "function": {
-            "name": "blur_image",
-            "description": "Размыть изображение.",
-            "parameters": {
-                "type": "object",
-                "properties": {
-                    "kernel_size": {"type": "integer"}
-                },
-                "required": ["kernel_size"]
-            }
-        }
-    },
-    {
-        "type": "function",
-        "function": {
-            "name": "convert_to_grayscale",
-            "description": "Сделать изображение черно-белым.",
-            "parameters": {
-                "type": "object",
-                "properties": {
-                    "mode": {"type": "string", "enum": ["standard", "hc", "soft", "film", "infrared"]}
-                },
-                "required": ["mode"]
-            }
-        }
-    }
+# ── Tools для LLM ──────────────────────────────────────────────────────────
+TOOLS = [
+    {"type":"function","function":{"name":"rotate_image","description":"Повернуть изображение.",
+     "parameters":{"type":"object","properties":{"angle":{"type":"integer"}},"required":["angle"]}}},
+    {"type":"function","function":{"name":"resize_image","description":"Изменить размер.",
+     "parameters":{"type":"object","properties":{"width":{"type":"integer"},"height":{"type":"integer"}},"required":["width","height"]}}},
+    {"type":"function","function":{"name":"flip_image","description":"Отразить изображение.",
+     "parameters":{"type":"object","properties":{"direction":{"type":"string","enum":["horizontal","vertical"]}},"required":["direction"]}}},
+    {"type":"function","function":{"name":"blur_image","description":"Размыть изображение.",
+     "parameters":{"type":"object","properties":{"kernel_size":{"type":"integer"}},"required":["kernel_size"]}}},
+    {"type":"function","function":{"name":"convert_to_grayscale","description":"Сделать ч/б.",
+     "parameters":{"type":"object","properties":{"mode":{"type":"string","enum":["standard","hc","soft","film","infrared"]}},"required":["mode"]}}},
 ]
  
 def ask_llm(prompt, processor):
     response = client.chat.completions.create(
         model="local-model",
-        messages=[{"role": "user", "content": prompt}],
-        tools=tools,
-        tool_choice="auto",
-        temperature=0.0
+        messages=[{"role":"user","content":prompt}],
+        tools=TOOLS, tool_choice="auto", temperature=0.0
     )
     message = response.choices[0].message
+    results = []
     if not message.tool_calls:
-        print("Нейросеть не смогла распознать параметры.")
-        return
-    for tool_call in message.tool_calls:
-        func_name = tool_call.function.name
-        args = json.loads(tool_call.function.arguments)
+        return ["Нейросеть не распознала команду"]
+    for tc in message.tool_calls:
+        func_name = tc.function.name
+        args = json.loads(tc.function.arguments)
         if hasattr(processor, func_name):
             result = getattr(processor, func_name)(**args)
-            print(f"✅ Выполнено: {result}")
+            results.append(result)
+    return results
  
+# ── Главное окно ───────────────────────────────────────────────────────────
+class App(tk.Tk):
+    def __init__(self):
+        super().__init__()
+        self.title("AI Image Editor")
+        self.geometry("1200x780")
+        self.minsize(900, 600)
+        self.configure(bg=BG)
+        self.processor = None
+        self._build()
  
-def submenu(title, options, descriptions=None):
-    print(f"\n  {title}")
-    for i, opt in enumerate(options, 1):
-        desc = f"  — {descriptions[i-1]}" if descriptions else ""
-        print(f"  {i}. {opt}{desc}")
-    choice = input("  Ваш выбор: ").strip()
-    if choice.isdigit() and 1 <= int(choice) <= len(options):
-        return int(choice) - 1
-    print("  ⚠️  Неверный ввод.")
-    return None
+    def _build(self):
+        # ── Заголовок
+        header = tk.Frame(self, bg=PANEL, height=56)
+        header.pack(fill="x")
+        header.pack_propagate(False)
+        tk.Label(header, text="✦  AI Image Editor", font=("Segoe UI", 15, "bold"),
+                 bg=PANEL, fg=ACCENT2).pack(side="left", padx=24, pady=14)
+        tk.Label(header, text="Нейросеть обрабатывает каждое действие",
+                 font=("Segoe UI", 9), bg=PANEL, fg=MUTED).pack(side="left", pady=14)
+ 
+        # ── Тело
+        body = tk.Frame(self, bg=BG)
+        body.pack(fill="both", expand=True, padx=0, pady=0)
+ 
+        # Левая панель инструментов
+        left = tk.Frame(body, bg=PANEL, width=260)
+        left.pack(side="left", fill="y")
+        left.pack_propagate(False)
+        self._build_tools(left)
+ 
+        # Центр — превью
+        center = tk.Frame(body, bg=BG)
+        center.pack(side="left", fill="both", expand=True, padx=0)
+        self._build_preview(center)
+ 
+        # Правая панель — лог
+        right = tk.Frame(body, bg=PANEL, width=240)
+        right.pack(side="right", fill="y")
+        right.pack_propagate(False)
+        self._build_log(right)
+ 
+    # ── Левая панель ───────────────────────────────────────────────────────
+    def _build_tools(self, parent):
+        tk.Label(parent, text="ИНСТРУМЕНТЫ", font=("Segoe UI", 8, "bold"),
+                 bg=PANEL, fg=MUTED).pack(anchor="w", padx=20, pady=(18,8))
+ 
+        # Открыть файл
+        self._btn(parent, "📂  Открыть изображение", self._open_file, accent=True)
+        self._divider(parent)
+ 
+        # Поворот
+        self._section(parent, "🔄  Поворот")
+        frm = tk.Frame(parent, bg=PANEL)
+        frm.pack(fill="x", padx=16, pady=(0,4))
+        for angle in [90, 180, 270]:
+            self._small_btn(frm, f"{angle}°", lambda a=angle: self._action(f"повернуть на {a} градусов"))
+        self._angle_row(parent)
+        self._divider(parent)
+ 
+        # Ч/б
+        self._section(parent, "🎞️  Чёрно-белый")
+        modes = [("Обычный","standard"),("Высококонтрастный","hc"),
+                 ("Мягкий","soft"),("Kodak T-MAX","film"),("Инфракрасный","infrared")]
+        for label, mode in modes:
+            self._btn(parent, label, lambda m=mode: self._action(f"сделать чб в режиме {m}"))
+        self._divider(parent)
+ 
+        # Отражение
+        self._section(parent, "🪞  Отражение")
+        frm2 = tk.Frame(parent, bg=PANEL)
+        frm2.pack(fill="x", padx=16, pady=(0,4))
+        self._small_btn(frm2, "↔ Гориз.", lambda: self._action("отрази горизонтально"))
+        self._small_btn(frm2, "↕ Верт.", lambda: self._action("отрази вертикально"))
+        self._divider(parent)
+ 
+        # Размытие
+        self._section(parent, "💧  Размытие")
+        frm3 = tk.Frame(parent, bg=PANEL)
+        frm3.pack(fill="x", padx=16, pady=(0,4))
+        for label, k in [("Слабое","5"),("Среднее","15"),("Сильное","31")]:
+            self._small_btn(frm3, label, lambda k=k: self._action(f"размыть с ядром {k}"))
+        self._divider(parent)
+ 
+        # Размер
+        self._section(parent, "📐  Размер")
+        sizes = [("320×240","320 240"),("640×480","640 480"),("1280×720","1280 720"),("1920×1080","1920 1080")]
+        for label, wh in sizes:
+            w, h = wh.split()
+            self._btn(parent, label, lambda w=w,h=h: self._action(f"измени размер на {w}x{h}"))
+        self._custom_size(parent)
+        self._divider(parent)
+ 
+        # Сохранить
+        self._btn(parent, "💾  Сохранить", self._save, accent=True)
+ 
+    def _section(self, parent, text):
+        tk.Label(parent, text=text, font=("Segoe UI", 9, "bold"),
+                 bg=PANEL, fg=TEXT).pack(anchor="w", padx=20, pady=(10,4))
+ 
+    def _divider(self, parent):
+        tk.Frame(parent, bg=BORDER, height=1).pack(fill="x", padx=16, pady=6)
+ 
+    def _btn(self, parent, text, cmd, accent=False):
+        bg = ACCENT if accent else CARD
+        fg = "#fff" if accent else TEXT
+        b = tk.Button(parent, text=text, command=cmd,
+                      bg=bg, fg=fg, relief="flat", cursor="hand2",
+                      font=("Segoe UI", 9), anchor="w",
+                      padx=12, pady=7, bd=0,
+                      activebackground=BTN_HOVER, activeforeground="#fff")
+        b.pack(fill="x", padx=16, pady=2)
+        b.bind("<Enter>", lambda e: b.config(bg=BTN_HOVER if accent else "#2d2d4a"))
+        b.bind("<Leave>", lambda e: b.config(bg=bg))
+ 
+    def _small_btn(self, parent, text, cmd):
+        b = tk.Button(parent, text=text, command=cmd,
+                      bg=CARD, fg=TEXT, relief="flat", cursor="hand2",
+                      font=("Segoe UI", 8), padx=8, pady=5, bd=0,
+                      activebackground=BTN_HOVER, activeforeground="#fff")
+        b.pack(side="left", padx=2, pady=2)
+        b.bind("<Enter>", lambda e: b.config(bg=BTN_HOVER))
+        b.bind("<Leave>", lambda e: b.config(bg=CARD))
+ 
+    def _angle_row(self, parent):
+        frm = tk.Frame(parent, bg=PANEL)
+        frm.pack(fill="x", padx=16, pady=(0,4))
+        self.angle_var = tk.StringVar(value="45")
+        e = tk.Entry(frm, textvariable=self.angle_var, width=5,
+                     bg=CARD, fg=TEXT, insertbackground=TEXT,
+                     relief="flat", font=("Segoe UI", 9))
+        e.pack(side="left", padx=(0,6), ipady=5)
+        b = tk.Button(frm, text="Повернуть", command=self._custom_rotate,
+                      bg=CARD, fg=TEXT, relief="flat", cursor="hand2",
+                      font=("Segoe UI", 8), padx=8, pady=5, bd=0,
+                      activebackground=BTN_HOVER, activeforeground="#fff")
+        b.pack(side="left")
+        b.bind("<Enter>", lambda e: b.config(bg=BTN_HOVER))
+        b.bind("<Leave>", lambda e: b.config(bg=CARD))
+ 
+    def _custom_size(self, parent):
+        frm = tk.Frame(parent, bg=PANEL)
+        frm.pack(fill="x", padx=16, pady=(4,2))
+        self.cw = tk.Entry(frm, width=5, bg=CARD, fg=TEXT, insertbackground=TEXT,
+                           relief="flat", font=("Segoe UI", 9))
+        self.cw.insert(0, "800")
+        self.cw.pack(side="left", ipady=5, padx=(0,4))
+        tk.Label(frm, text="×", bg=PANEL, fg=MUTED, font=("Segoe UI",9)).pack(side="left")
+        self.ch = tk.Entry(frm, width=5, bg=CARD, fg=TEXT, insertbackground=TEXT,
+                           relief="flat", font=("Segoe UI", 9))
+        self.ch.insert(0, "600")
+        self.ch.pack(side="left", ipady=5, padx=(4,6))
+        b = tk.Button(frm, text="OK", command=self._custom_resize,
+                      bg=CARD, fg=TEXT, relief="flat", cursor="hand2",
+                      font=("Segoe UI", 8), padx=8, pady=5, bd=0,
+                      activebackground=BTN_HOVER, activeforeground="#fff")
+        b.pack(side="left")
+        b.bind("<Enter>", lambda e: b.config(bg=BTN_HOVER))
+        b.bind("<Leave>", lambda e: b.config(bg=CARD))
+ 
+    # ── Превью ─────────────────────────────────────────────────────────────
+    def _build_preview(self, parent):
+        # Строка пути файла
+        top = tk.Frame(parent, bg=CARD, height=38)
+        top.pack(fill="x", padx=12, pady=(12,0))
+        top.pack_propagate(False)
+        self.path_label = tk.Label(top, text="Файл не открыт",
+                                   font=("Segoe UI", 9), bg=CARD, fg=MUTED)
+        self.path_label.pack(side="left", padx=12, pady=8)
+        self.info_label = tk.Label(top, text="", font=("Segoe UI", 8),
+                                   bg=CARD, fg=MUTED)
+        self.info_label.pack(side="right", padx=12, pady=8)
+ 
+        # Холст превью
+        self.canvas = tk.Canvas(parent, bg="#0a0a10", highlightthickness=0)
+        self.canvas.pack(fill="both", expand=True, padx=12, pady=8)
+        self.canvas.bind("<Configure>", lambda e: self._refresh_preview())
+ 
+        # Плейсхолдер
+        self._placeholder()
+ 
+    def _placeholder(self):
+        self.canvas.delete("all")
+        w = self.canvas.winfo_width() or 700
+        h = self.canvas.winfo_height() or 500
+        self.canvas.create_text(w//2, h//2, text="📂\n\nОткройте изображение",
+                                 font=("Segoe UI", 13), fill=MUTED, justify="center")
+ 
+    # ── Лог ────────────────────────────────────────────────────────────────
+    def _build_log(self, parent):
+        tk.Label(parent, text="ИСТОРИЯ", font=("Segoe UI", 8, "bold"),
+                 bg=PANEL, fg=MUTED).pack(anchor="w", padx=16, pady=(18,6))
+        self.log_frame = tk.Frame(parent, bg=PANEL)
+        self.log_frame.pack(fill="both", expand=True, padx=8)
+        sb = tk.Scrollbar(self.log_frame)
+        sb.pack(side="right", fill="y")
+        self.log_box = tk.Text(self.log_frame, bg=PANEL, fg=TEXT,
+                               font=("Segoe UI", 8), relief="flat",
+                               wrap="word", state="disabled",
+                               yscrollcommand=sb.set, bd=0,
+                               selectbackground=ACCENT)
+        self.log_box.pack(fill="both", expand=True)
+        sb.config(command=self.log_box.yview)
+        self.log_box.tag_config("ok",  foreground=SUCCESS)
+        self.log_box.tag_config("err", foreground=DANGER)
+        self.log_box.tag_config("dim", foreground=MUTED)
+ 
+        # Статус
+        self.status_var = tk.StringVar(value="Готов")
+        self.status_bar = tk.Label(parent, textvariable=self.status_var,
+                                   font=("Segoe UI", 8), bg=CARD, fg=MUTED,
+                                   anchor="w")
+        self.status_bar.pack(fill="x", padx=8, pady=(4,12), ipady=4)
+ 
+    def _log(self, text, tag="ok"):
+        self.log_box.config(state="normal")
+        self.log_box.insert("end", f"• {text}\n", tag)
+        self.log_box.see("end")
+        self.log_box.config(state="disabled")
+ 
+    def _status(self, text, color=MUTED):
+        self.status_var.set(text)
+        self.status_bar.config(fg=color)
+ 
+    # ── Действия ───────────────────────────────────────────────────────────
+    def _open_file(self):
+        path = filedialog.askopenfilename(
+            filetypes=[("Изображения","*.jpg *.jpeg *.png *.bmp *.webp *.tiff"),
+                       ("Все файлы","*.*")])
+        if not path: return
+        try:
+            self.processor = ImageProcessor(path)
+            self.path_label.config(text=path.split("/")[-1].split("\\")[-1], fg=TEXT)
+            self._update_info()
+            self._refresh_preview()
+            self._log(f"Открыт: {path.split('/')[-1].split(chr(92))[-1]}", "ok")
+            self._status("Файл загружен", SUCCESS)
+        except Exception as e:
+            messagebox.showerror("Ошибка", str(e))
+            self._log(str(e), "err")
+ 
+    def _action(self, prompt):
+        if not self.processor:
+            messagebox.showwarning("Нет файла", "Сначала откройте изображение.")
+            return
+        self._status("⏳ Нейросеть обрабатывает...", WARNING)
+        self.update()
+        def run():
+            try:
+                results = ask_llm(prompt, self.processor)
+                self.after(0, lambda: self._on_done(results))
+            except Exception as e:
+                self.after(0, lambda: self._on_error(str(e)))
+        threading.Thread(target=run, daemon=True).start()
+ 
+    def _on_done(self, results):
+        for r in results:
+            self._log(r, "ok")
+        self._refresh_preview()
+        self._update_info()
+        self._status("Готов", SUCCESS)
+ 
+    def _on_error(self, err):
+        self._log(err, "err")
+        self._status("Ошибка", DANGER)
+ 
+    def _custom_rotate(self):
+        try:
+            angle = int(self.angle_var.get())
+            self._action(f"повернуть на {angle} градусов")
+        except ValueError:
+            messagebox.showwarning("Ошибка", "Введите целое число.")
+ 
+    def _custom_resize(self):
+        try:
+            w, h = int(self.cw.get()), int(self.ch.get())
+            self._action(f"измени размер на {w}x{h}")
+        except ValueError:
+            messagebox.showwarning("Ошибка", "Введите целые числа.")
+ 
+    def _save(self):
+        if not self.processor:
+            messagebox.showwarning("Нет файла", "Нечего сохранять.")
+            return
+        path = filedialog.asksaveasfilename(
+            defaultextension=".jpg",
+            filetypes=[("JPEG","*.jpg"),("PNG","*.png"),("BMP","*.bmp")])
+        if not path: return
+        self.processor.save_result(path)
+        self._log(f"Сохранено: {path.split('/')[-1].split(chr(92))[-1]}", "ok")
+        self._status("Сохранено ✓", SUCCESS)
+ 
+    def _refresh_preview(self):
+        if not self.processor:
+            self._placeholder()
+            return
+        self.canvas.update_idletasks()
+        cw = self.canvas.winfo_width()
+        ch = self.canvas.winfo_height()
+        if cw < 10 or ch < 10:
+            return
+        pil = self.processor.get_pil(cw - 20, ch - 20)
+        self._tk_img = ImageTk.PhotoImage(pil)
+        self.canvas.delete("all")
+        self.canvas.create_image(cw//2, ch//2, anchor="center", image=self._tk_img)
+ 
+    def _update_info(self):
+        if not self.processor: return
+        h, w = self.processor.img.shape[:2]
+        ch = 1 if len(self.processor.img.shape) == 2 else self.processor.img.shape[2]
+        mode = "Ч/Б" if ch == 1 else "RGB"
+        self.info_label.config(text=f"{w} × {h}  •  {mode}", fg=MUTED)
  
  
 if __name__ == "__main__":
-    print("╔══════════════════════════════════════╗")
-    print("║    РЕДАКТОР ИЗОБРАЖЕНИЙ (AI-версия)  ║")
-    print("╚══════════════════════════════════════╝")
-    image_path = input("Введите имя файла картинки (например, photo.jpg): ").strip()
- 
     try:
-        processor = ImageProcessor(image_path)
-        print(f"✅ Файл '{image_path}' успешно загружен.\n")
-    except Exception as e:
-        print(f"❌ Ошибка при открытии картинки: {e}")
+        from PIL import Image, ImageTk
+    except ImportError:
+        print("Установите Pillow:  pip install Pillow")
         sys.exit(1)
- 
-    MAIN_MENU = [
-        "Повернуть изображение",
-        "Сделать чёрно-белым",
-        "Отразить зеркально",
-        "Размыть",
-        "Изменить размер (разрешение)",
-        "Сохранить результат и выйти",
-    ]
- 
-    ANGLES = [30, 45, 60, 90, 120, 135, 150, 180, 270, 0]
-    ANGLE_LABELS = ["30°","45°","60°","90°","120°","135°","150°","180°","270°","Свой угол"]
- 
-    BW_MODES = ["standard", "hc", "soft", "film", "infrared"]
-    BW_LABELS = [
-        "Обычный",
-        "Высококонтрастный",
-        "Мягкий (плёночный)",
-        "Имитация плёнки Kodak",
-        "Инфракрасный эффект",
-    ]
-    BW_DESCS = [
-        "стандартный перевод в grayscale",
-        "CLAHE — резкие тени и света",
-        "мягкие тона, приятный свет",
-        "тёплые веса каналов + зерно",
-        "небо тёмное, листья светлые",
-    ]
- 
-    while True:
-        print("\n┌─────────────────────────────────────┐")
-        print("│         МЕНЮ УПРАВЛЕНИЯ             │")
-        print("├─────────────────────────────────────┤")
-        for i, item in enumerate(MAIN_MENU, 1):
-            print(f"│  {i}. {item:<35}│")
-        print("└─────────────────────────────────────┘")
- 
-        choice = input("Выберите действие (1-6): ").strip()
- 
-        if choice == "1":
-            idx = submenu("Выберите угол поворота:", ANGLE_LABELS)
-            if idx is not None:
-                angle = ANGLES[idx]
-                if angle == 0:
-                    try:
-                        angle = int(input("  Введите угол (0-360): ").strip())
-                    except ValueError:
-                        print("  ⚠️  Неверный угол.")
-                        continue
-                ask_llm(f"повернуть изображение на {angle} градусов", processor)
- 
-        elif choice == "2":
-            idx = submenu("Выберите режим ч/б:", BW_LABELS, BW_DESCS)
-            if idx is not None:
-                mode = BW_MODES[idx]
-                ask_llm(f"сделать изображение черно-белым в режиме {mode}", processor)
- 
-        elif choice == "3":
-            idx = submenu("Как отразить?", ["По горизонтали (влево-вправо)", "По вертикали (вверх-вниз)"])
-            if idx is not None:
-                direction_ru = ["горизонтально", "вертикально"][idx]
-                ask_llm(f"отрази {direction_ru}", processor)
- 
-        elif choice == "4":
-            idx = submenu("Степень размытия?", ["Слабое (5)", "Среднее (15)", "Сильное (31)"])
-            if idx is not None:
-                kernel = [5, 15, 31][idx]
-                ask_llm(f"размыть изображение с размером ядра {kernel}", processor)
- 
-        elif choice == "5":
-            SIZES = [
-                ("320 × 240  (маленький)", 320, 240),
-                ("640 × 480  (средний)",   640, 480),
-                ("800 × 600  (большой)",   800, 600),
-                ("1280 × 720 (HD)",        1280, 720),
-                ("1920 × 1080 (Full HD)", 1920, 1080),
-                ("Свой размер",            None, None),
-            ]
-            idx = submenu("Выберите новый размер:", [s[0] for s in SIZES])
-            if idx is not None:
-                _, w, h = SIZES[idx]
-                if w is None:
-                    try:
-                        w = int(input("  Ширина (px): ").strip())
-                        h = int(input("  Высота (px): ").strip())
-                    except ValueError:
-                        print("  ⚠️  Неверный ввод размера.")
-                        continue
-                ask_llm(f"измени размер на {w}x{h}", processor)
- 
-        elif choice == "6":
-            processor.save_result("result.jpg")
-            print("💾 Результат сохранён в файл result.jpg.")
-            print("👋 Выход из программы.")
-            break
- 
-        else:
-            print("⚠️  Неверный ввод, выберите число от 1 до 6.")
+    app = App()
+    app.mainloop()
  
