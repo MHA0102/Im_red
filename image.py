@@ -35,8 +35,28 @@ class ImageProcessor:
         if self.img is None:
             raise FileNotFoundError(f"Файл не найден: {image_path}")
         self.is_grayscale = False
+        self._original = self.img.copy()   # оригинал — никогда не меняется
+        self._history  = []                # стек состояний для undo
+ 
+    def _save_state(self):
+        """Сохраняет текущее состояние перед изменением."""
+        self._history.append((self.img.copy(), self.is_grayscale))
+ 
+    def undo(self):
+        """Откатывает последнее действие."""
+        if not self._history:
+            return False
+        self.img, self.is_grayscale = self._history.pop()
+        return True
+ 
+    def reset(self):
+        """Возвращает оригинальное изображение."""
+        self._history.clear()
+        self.img = self._original.copy()
+        self.is_grayscale = False
  
     def rotate_image(self, angle: int):
+        self._save_state()
         if angle == 90:
             self.img = cv2.rotate(self.img, cv2.ROTATE_90_CLOCKWISE)
         elif angle == 180:
@@ -56,19 +76,23 @@ class ImageProcessor:
         return f"Повернуто на {angle}°"
  
     def resize_image(self, width: int, height: int):
+        self._save_state()
         self.img = cv2.resize(self.img, (width, height))
         return f"Размер изменён → {width}×{height}"
  
     def flip_image(self, direction: str):
+        self._save_state()
         self.img = cv2.flip(self.img, 1 if direction == "horizontal" else 0)
         return "Отражено " + ("по горизонтали" if direction == "horizontal" else "по вертикали")
  
     def blur_image(self, kernel_size: int):
+        self._save_state()
         if kernel_size % 2 == 0: kernel_size += 1
         self.img = cv2.GaussianBlur(self.img, (kernel_size, kernel_size), 0)
         return f"Размытие (ядро {kernel_size})"
  
     def convert_to_grayscale(self, mode: str = "standard"):
+        self._save_state()
         if self.is_grayscale or len(self.img.shape) == 2:
             self.img = cv2.cvtColor(self.img, cv2.COLOR_GRAY2BGR)
             self.is_grayscale = False
@@ -198,6 +222,26 @@ class App(tk.Tk):
  
         # Открыть файл
         self._btn(parent, "📂  Открыть изображение", self._open_file, accent=True)
+ 
+        # Undo / Reset
+        frm_ur = tk.Frame(parent, bg=PANEL)
+        frm_ur.pack(fill="x", padx=16, pady=(4,0))
+        b_undo = tk.Button(frm_ur, text="↩ Отменить", command=self._undo,
+                           bg=CARD, fg=TEXT, relief="flat", cursor="hand2",
+                           font=("Segoe UI", 9), padx=10, pady=6, bd=0,
+                           activebackground=BTN_HOVER, activeforeground="#fff")
+        b_undo.pack(side="left", expand=True, fill="x", padx=(0,3))
+        b_undo.bind("<Enter>", lambda e: b_undo.config(bg=BTN_HOVER))
+        b_undo.bind("<Leave>", lambda e: b_undo.config(bg=CARD))
+ 
+        b_reset = tk.Button(frm_ur, text="🔁 Оригинал", command=self._reset,
+                            bg=CARD, fg=DANGER, relief="flat", cursor="hand2",
+                            font=("Segoe UI", 9), padx=10, pady=6, bd=0,
+                            activebackground="#7f1d1d", activeforeground="#fff")
+        b_reset.pack(side="left", expand=True, fill="x", padx=(3,0))
+        b_reset.bind("<Enter>", lambda e: b_reset.config(bg="#7f1d1d", fg="#fff"))
+        b_reset.bind("<Leave>", lambda e: b_reset.config(bg=CARD, fg=DANGER))
+ 
         self._divider(parent)
  
         # Поворот
@@ -235,7 +279,7 @@ class App(tk.Tk):
  
         # Размер
         self._section(parent, "📐  Размер")
-        sizes = [("320×240","320 240"),("640×480","640 480"),("1280×720","1280 720"),("1920×1080","1920 1080")]
+        sizes = [("640×480","640 480"),("1280×720","1280 720"),("1920×1080","1920 1080"),("1080×1350  Portrait","1080 1350"),("1080×1920  Stories","1080 1920")]
         for label, wh in sizes:
             w, h = wh.split()
             self._btn(parent, label, lambda w=w,h=h: self._action(f"измени размер на {w}x{h}"))
@@ -374,6 +418,27 @@ class App(tk.Tk):
         self.status_bar.config(fg=color)
  
     # ── Действия ───────────────────────────────────────────────────────────
+    def _undo(self):
+        if not self.processor:
+            return
+        if self.processor.undo():
+            self._refresh_preview()
+            self._update_info()
+            self._log("Отменено последнее действие", "dim")
+            self._status("Отменено", WARNING)
+        else:
+            self._log("Нечего отменять", "dim")
+ 
+    def _reset(self):
+        if not self.processor:
+            return
+        if messagebox.askyesno("Сброс", "Вернуть оригинальное изображение?\nВся история будет удалена."):
+            self.processor.reset()
+            self._refresh_preview()
+            self._update_info()
+            self._log("Сброс до оригинала", "dim")
+            self._status("Сброшено до оригинала", WARNING)
+ 
     def _open_file(self):
         path = filedialog.askopenfilename(
             filetypes=[("Изображения","*.jpg *.jpeg *.png *.bmp *.webp *.tiff"),
